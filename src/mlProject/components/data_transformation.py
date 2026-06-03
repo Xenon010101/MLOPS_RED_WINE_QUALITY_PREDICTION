@@ -18,9 +18,36 @@ class DataTransformation:
 
     def train_test_spliting(self):
         data = pd.read_csv(self.config.data_path)
+        stratify = None
+        if self.config.stratify_column:
+            if self.config.stratify_column not in data.columns:
+                raise ValueError(
+                    f"Stratify column '{self.config.stratify_column}' "
+                    "not found in transformed data"
+                )
+            stratify = data[self.config.stratify_column]
 
-        # Split the data into training and test sets. (0.75, 0.25) split.
-        train, test = train_test_split(data)
+        try:
+            train, test = train_test_split(
+                data,
+                test_size=self.config.test_size,
+                random_state=self.config.random_state,
+                stratify=stratify,
+            )
+        except ValueError as exc:
+            if stratify is None:
+                raise
+            logger.warning(
+                "Falling back to non-stratified split because '%s' cannot be "
+                "stratified safely: %s",
+                self.config.stratify_column,
+                exc,
+            )
+            train, test = train_test_split(
+                data,
+                test_size=self.config.test_size,
+                random_state=self.config.random_state,
+            )
 
         train.to_csv(os.path.join(self.config.root_dir, "train.csv"),index = False)
         test.to_csv(os.path.join(self.config.root_dir, "test.csv"),index = False)

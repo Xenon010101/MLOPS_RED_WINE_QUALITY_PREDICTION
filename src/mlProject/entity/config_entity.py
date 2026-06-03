@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,9 @@ class DataValidationConfig:
 class DataTransformationConfig:
     root_dir: Path
     data_path: Path
+    test_size: float
+    random_state: int
+    stratify_column: Optional[str]
 
 @dataclass(frozen=True)
 class ModelTrainerConfig:

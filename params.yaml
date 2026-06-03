@@ -1,3 +1,8 @@
+DataTransformation:
+  test_size: 0.25
+  random_state: 42
+  stratify_column: quality
+
 ElasticNet:
   alpha: 0.2
   l1_ratio: 0.1
