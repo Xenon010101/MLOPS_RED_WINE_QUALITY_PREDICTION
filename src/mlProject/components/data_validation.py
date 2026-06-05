@@ -1,15 +1,72 @@
+from collections import namedtuple
+from scipy.stats import ks_2samp
+
 from mlProject import logger
 import pandas as pd
 from mlProject.entity.config_entity import DataValidationConfig
 
 
+ValidationResult = namedtuple("ValidationResult", [
+    "schema_valid", "drift_detected", "drift_scores", "errors"
+])
 
-class DataValidation:
+
+class SchemaValidator:
+    def __init__(self, schema: dict):
+        self.schema = schema
+
+    def validate(self, data: pd.DataFrame) -> tuple[bool, list[str]]:
+        errors = []
+        schema_cols = dict(self.schema)
+        for col in data.columns:
+            if col not in schema_cols:
+                errors.append(f"Unexpected column '{col}' found in data")
+                continue
+            expected_dtype = schema_cols[col]
+            actual_dtype = str(data[col].dtype)
+            if actual_dtype != expected_dtype:
+                errors.append(
+                    f"Column '{col}' type mismatch: expected {expected_dtype}, got {actual_dtype}"
+                )
+            null_count = data[col].isnull().sum()
+            if null_count > 0:
+                errors.append(f"Column '{col}' has {null_count} null value(s)")
+        for col in schema_cols:
+            if col not in data.columns:
+                errors.append(f"Missing expected column '{col}' in data")
+        return len(errors) == 0, errors
+
+
+class DriftDetector:
+    def __init__(self, threshold: float = 0.05):
+        self.threshold = threshold
+
+    def detect(self, reference: pd.DataFrame, production: pd.DataFrame) -> tuple[bool, dict[str, float]]:
+        scores = {}
+        drift = False
+        common_cols = [c for c in reference.columns if c in production.columns and c != "quality"]
+        for col in common_cols:
+            ref_dtype = reference[col].dtype
+            if not pd.api.types.is_numeric_dtype(ref_dtype):
+                continue
+            ref_clean = reference[col].dropna()
+            prod_clean = production[col].dropna()
+            if len(ref_clean) == 0 or len(prod_clean) == 0:
+                continue
+            stat, p_value = ks_2samp(ref_clean, prod_clean)
+            scores[col] = round(p_value, 6)
+            if p_value < self.threshold:
+                drift = True
+        return drift, scores
+
+
+class DataValidator:
     def __init__(self, config: DataValidationConfig):
         self.config = config
+        self.schema_validator = SchemaValidator(config.all_schema)
+        self.drift_detector = DriftDetector(config.drift_threshold)
 
-
-    def validate_all_columns(self) -> bool:
+    def run(self) -> ValidationResult:
         try:
             data = pd.read_csv(self.config.data_file)
         except FileNotFoundError:
@@ -19,39 +76,28 @@ class DataValidation:
             logger.exception(f"Failed to read data file: {self.config.data_file}")
             raise
 
-        try:
-            schema_cols = dict(self.config.all_schema)
-            all_errors = []
+        schema_valid, schema_errors = self.schema_validator.validate(data)
+        drift_detected, drift_scores = self.drift_detector.detect(data, data)
 
-            for col in data.columns:
-                if col not in schema_cols:
-                    all_errors.append(f"Unexpected column '{col}' found in data")
-                    continue
-                expected_dtype = schema_cols[col]
-                actual_dtype = str(data[col].dtype)
-                if actual_dtype != expected_dtype:
-                    all_errors.append(
-                        f"Column '{col}' type mismatch: expected {expected_dtype}, got {actual_dtype}"
-                    )
-                null_count = data[col].isnull().sum()
-                if null_count > 0:
-                    all_errors.append(f"Column '{col}' has {null_count} null value(s)")
+        all_errors = list(schema_errors)
+        validation_status = schema_valid and not drift_detected
 
-            for col in schema_cols:
-                if col not in data.columns:
-                    all_errors.append(f"Missing expected column '{col}' in data")
+        with open(self.config.STATUS_FILE, 'w') as f:
+            f.write(f"Validation status: {validation_status}\n")
+            f.write(f"Schema valid: {schema_valid}\n")
+            f.write(f"Drift detected: {drift_detected}\n")
+            if drift_scores:
+                f.write("Drift scores:\n")
+                for col, pv in drift_scores.items():
+                    f.write(f"  {col}: {pv}\n")
+            if all_errors:
+                f.write("Errors:\n")
+                for err in all_errors:
+                    f.write(f"  - {err}\n")
 
-            validation_status = len(all_errors) == 0
-            with open(self.config.STATUS_FILE, 'w') as f:
-                f.write(f"Validation status: {validation_status}")
-                if all_errors:
-                    f.write("\nErrors:\n")
-                    for err in all_errors:
-                        f.write(f"  - {err}\n")
-
-            logger.info(f"Data validation {'passed' if validation_status else 'failed'} ({len(all_errors)} error(s))")
-            return validation_status
-
-        except Exception as e:
-            logger.exception(f"Data validation failed with error: {e}")
-            raise
+        logger.info(
+            f"Validation {'passed' if validation_status else 'failed'}: "
+            f"schema_valid={schema_valid}, drift_detected={drift_detected}, "
+            f"errors={len(all_errors)}"
+        )
+        return ValidationResult(schema_valid, drift_detected, drift_scores, all_errors)

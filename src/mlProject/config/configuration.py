@@ -53,11 +53,14 @@ class ConfigurationManager:
 
         create_directories([config.root_dir])
 
+        drift_threshold = self.params.get("DataValidation", {}).get("drift_threshold", 0.05)
+
         data_validation_config = DataValidationConfig(
             root_dir=Path(config.root_dir),
             STATUS_FILE=Path(config.STATUS_FILE),
             data_file = Path(config.data_file),
             all_schema=schema,
+            drift_threshold=drift_threshold,
         )
 
         return data_validation_config

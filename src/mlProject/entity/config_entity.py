@@ -16,6 +16,7 @@ class DataValidationConfig:
     STATUS_FILE: Path
     data_file: Path
     all_schema: dict
+    drift_threshold: float = 0.05
 
 @dataclass(frozen=True)
 class DataTransformationConfig:

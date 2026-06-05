@@ -1,3 +1,6 @@
+DataValidation:
+  drift_threshold: 0.05
+
 DataTransformation:
   test_size: 0.25
   random_state: 42
