@@ -32,7 +32,10 @@ def read_yaml(path_to_yaml: Path) -> ConfigBox:
             return ConfigBox(content)
     except BoxValueError:
         raise ValueError("yaml file is empty")
+    except FileNotFoundError:
+        raise FileNotFoundError(f"yaml file not found: {path_to_yaml}")
     except Exception as e:
+        logger.exception(f"failed to read yaml file: {path_to_yaml}")
         raise e
     
 
@@ -46,7 +49,7 @@ def create_directories(path_to_directories: list, verbose=True):
         ignore_log (bool, optional): ignore if multiple dirs is to be created. Defaults to False.
     """
     for path in path_to_directories:
-        os.makedirs(path, exist_ok=True)
+        Path(path).mkdir(parents=True, exist_ok=True)
         if verbose:
             logger.info(f"created directory at: {path}")
 
