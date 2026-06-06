@@ -1,26 +1,86 @@
-from flask import Flask, render_template, request, jsonify
+"""
+Wine Quality Prediction - Flask Application
+ 
+Security hardening (Issue 1 fix):
+  - /train requires a secret token via TRAIN_SECRET env var (fail-closed if unset)
+  - threading.Lock() replaces the bare boolean race condition
+  - Flask-Limiter caps /train at 10 req/hour per IP, /train/status at 60/min
+  - /train/status also requires the same token
+  - debug mode is controlled by FLASK_DEBUG env var, defaults to off in production
+"""
+ 
 import os
+import secrets
+import subprocess
+import sys
+import threading
+ 
 import numpy as np
 import pandas as pd
-from mlProject.pipeline.prediction import PredictionPipeline
+from flask import Flask, abort, jsonify, render_template, request
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from pathlib import Path
+ 
 from mlProject.config.configuration import ConfigurationManager
 from mlProject.constants import ENV_FLASK_PORT, ENV_FLASK_DEBUG, ENV_TAG
+from mlProject.pipeline.prediction import PredictionPipeline
 from mlProject.utils.common import load_env_file, get_env_or_config
-from pathlib import Path
-import subprocess
-import threading
-import sys
-
+ 
 load_env_file()
-
+ 
 app = Flask(__name__)
-
-training_lock = threading.Lock()
+ 
+# ---------------------------------------------------------------------------
+# Rate limiter - keyed on caller's IP
+# ---------------------------------------------------------------------------
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=[],          # No blanket global limit; set per-route
+    storage_uri="memory://",    # Fine for single-worker Render free tier
+)
+ 
+# ---------------------------------------------------------------------------
+# Training state
+# _training_lock is held for the entire duration of a training run.
+# acquire(blocking=False) is atomic - no race condition possible.
+# ---------------------------------------------------------------------------
+_training_lock = threading.Lock()
 is_training = False
 training_log = []
-
-
-def validate_config_at_startup():
+ 
+ 
+# ---------------------------------------------------------------------------
+# Auth helper
+# ---------------------------------------------------------------------------
+def _verify_train_token() -> bool:
+    """
+    Validate the caller's secret token against the TRAIN_SECRET env var.
+ 
+    Accepts the token in two ways (works from browser tab AND curl/CI):
+      - Query param  : GET /train?token=<secret>
+      - Custom header: X-Train-Token: <secret>
+ 
+    Returns False (deny) if TRAIN_SECRET is not set in the environment -
+    the endpoint is disabled entirely by default (fail-closed).
+    Uses secrets.compare_digest to prevent timing-oracle attacks.
+    """
+    expected = os.environ.get("TRAIN_SECRET", "")
+    if not expected:
+        return False  # No secret configured - refuse everything
+ 
+    supplied = (
+        request.args.get("token", "")
+        or request.headers.get("X-Train-Token", "")
+    )
+    return secrets.compare_digest(supplied.encode(), expected.encode())
+ 
+ 
+# ---------------------------------------------------------------------------
+# Startup helper
+# ---------------------------------------------------------------------------
+def validate_config_at_startup() -> None:
     """Validate all required configs are present before starting the server."""
     required_configs = [
         ("config/config.yaml", "Main configuration file"),
@@ -35,19 +95,20 @@ def validate_config_at_startup():
         print(f"ERROR: Missing required configuration files: {', '.join(missing)}")
         sys.exit(1)
     print(f"Configuration validation passed. Environment: {os.environ.get(ENV_TAG, 'development')}")
-
-
-def run_training_in_background():
-    """Run training in background so web app doesn't freeze"""
+ 
+ 
+# ---------------------------------------------------------------------------
+# Background training worker
+# ---------------------------------------------------------------------------
+def _run_training_in_background() -> None:
+    """Subprocess-based training; releases _training_lock when done."""
     global is_training, training_log
-    training_log = []
-
     try:
         training_log.append("Training started...")
         result = subprocess.run(
             ["python", "main.py"],
             capture_output=True,
-            text=True
+            text=True,
         )
         if result.returncode == 0:
             training_log.append("Training completed successfully!")
@@ -55,105 +116,141 @@ def run_training_in_background():
         else:
             training_log.append("Training failed!")
             training_log.append(result.stderr or result.stdout)
-    except Exception as e:
-        training_log.append(f"Training error: {e}")
+    except Exception as exc:
+        training_log.append(f"Training error: {exc}")
     finally:
         is_training = False
-
-def ensure_model_trained():
-    """Auto-train model if it doesn't exist"""
+        try:
+            _training_lock.release()
+        except RuntimeError:
+            pass  # already released - should never happen
+ 
+ 
+def ensure_model_trained() -> None:
+    """Train the model automatically on first deploy if no artifact exists."""
     try:
         config_manager = ConfigurationManager()
         eval_config = config_manager.get_model_evaluation_config()
         model_path = eval_config.model_path
     except Exception:
-        model_path = Path('artifacts/model_trainer/model.joblib')
+        model_path = Path("artifacts/model_trainer/model.joblib")
+ 
     if not model_path.exists():
-        print("Model not found. Starting automatic training...")
+        print("Model not found - starting automatic training...")
         try:
             os.system("python main.py")
             print("Auto-training completed!")
-        except Exception as e:
-            print(f"Auto-training failed: {e}")
+        except Exception as exc:
+            print(f"Auto-training failed: {exc}")
     else:
-        print("Model already exists, ready for predictions!")
-
-@app.route('/', methods=['GET'])
+        print("Model already exists - ready for predictions!")
+ 
+ 
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+ 
+@app.route("/", methods=["GET"])
 def homePage():
     return render_template("index.html")
-
-@app.route('/train', methods=['GET'])
+ 
+ 
+@app.route("/train", methods=["GET"])
+@limiter.limit("10 per hour")           # Hard cap: 10 triggers/hr per IP
 def training():
     global is_training, training_log
-
-    # If already training, don't start another one
-    if is_training:
+ 
+    # 1 - Authenticate first (401 reveals nothing about current state)
+    if not _verify_train_token():
+        abort(401)
+ 
+    # 2 - Atomically acquire the lock; reject if already running
+    acquired = _training_lock.acquire(blocking=False)
+    if not acquired:
         return render_template(
             "train_status.html",
             training_success=None,
-            training_log="Training is already in progress! Please wait..."
+            training_log="Training is already in progress! Please wait...",
         )
-
-    # Set the flag and start training in background
+ 
+    # 3 - Mark running and spawn daemon thread (won't block shutdown)
     is_training = True
     training_log = []
-    thread = threading.Thread(target=run_training_in_background)
+    thread = threading.Thread(target=_run_training_in_background, daemon=True)
     thread.start()
-
+ 
     return render_template(
         "train_status.html",
         training_success=True,
-        training_log="Training started in background! Check /train/status for updates."
+        training_log="Training started in background! Check /train/status for updates.",
     )
-
-@app.route('/train/status', methods=['GET'])
+ 
+ 
+@app.route("/train/status", methods=["GET"])
+@limiter.limit("60 per minute")         # Polling endpoint - more generous
 def training_status():
-    """Check if training is still running"""
-    global is_training, training_log
+    """Return current training state. Also requires the token."""
+    if not _verify_train_token():
+        abort(401)
+ 
     return jsonify({
         "is_training": is_training,
-        "log": training_log
+        "log": training_log,
     })
-
-@app.route('/predict', methods=['POST', 'GET'])
+ 
+ 
+@app.route("/predict", methods=["POST", "GET"])
 def index():
-    if request.method == 'POST':
+    if request.method == "POST":
         try:
-            fixed_acidity = float(request.form['fixed_acidity'])
-            volatile_acidity = float(request.form['volatile_acidity'])
-            citric_acid = float(request.form['citric_acid'])
-            residual_sugar = float(request.form['residual_sugar'])
-            chlorides = float(request.form['chlorides'])
-            free_sulfur_dioxide = float(request.form['free_sulfur_dioxide'])
-            total_sulfur_dioxide = float(request.form['total_sulfur_dioxide'])
-            density = float(request.form['density'])
-            pH = float(request.form['pH'])
-            sulphates = float(request.form['sulphates'])
-            alcohol = float(request.form['alcohol'])
-       
-            data_list = [fixed_acidity, volatile_acidity, citric_acid, residual_sugar, 
-                         chlorides, free_sulfur_dioxide, total_sulfur_dioxide, density, pH, sulphates, alcohol]
-                    
-            data = np.array(data_list).reshape(1, 11)
+            fixed_acidity        = float(request.form["fixed_acidity"])
+            volatile_acidity     = float(request.form["volatile_acidity"])
+            citric_acid          = float(request.form["citric_acid"])
+            residual_sugar       = float(request.form["residual_sugar"])
+            chlorides            = float(request.form["chlorides"])
+            free_sulfur_dioxide  = float(request.form["free_sulfur_dioxide"])
+            total_sulfur_dioxide = float(request.form["total_sulfur_dioxide"])
+            density              = float(request.form["density"])
+            pH                   = float(request.form["pH"])
+            sulphates            = float(request.form["sulphates"])
+            alcohol              = float(request.form["alcohol"])
+ 
+            data = np.array([
+                fixed_acidity, volatile_acidity, citric_acid, residual_sugar,
+                chlorides, free_sulfur_dioxide, total_sulfur_dioxide,
+                density, pH, sulphates, alcohol,
+            ]).reshape(1, 11)
+ 
             obj = PredictionPipeline()
             predict = obj.predict(data)
-
             final_prediction = round(float(predict[0]), 2)
-
-            return render_template('results.html', prediction=final_prediction)
-
-        except Exception as e:
-            print('The Exception message is: ', e) 
-            return render_template('results.html', error_msg="Unable to compute prediction. Please ensure all fields are filled with valid numbers.")
-
+ 
+            return render_template("results.html", prediction=final_prediction)
+ 
+        except Exception as exc:
+            print("The Exception message is: ", exc)
+            return render_template(
+                "results.html",
+                error_msg=(
+                    "Unable to compute prediction. "
+                    "Please ensure all fields are filled with valid numbers."
+                ),
+            )
     else:
-        return render_template('index.html')
-
-
+        return render_template("index.html")
+ 
+ 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print("Starting Wine Quality Prediction App...")
     validate_config_at_startup()
     ensure_model_trained()
+ 
+    # debug=True in production exposes an interactive shell - never do this.
+    # Set FLASK_DEBUG=1 locally to enable the Werkzeug debugger.
     port = int(get_env_or_config(ENV_FLASK_PORT, "8080", transform=int))
-    debug = get_env_or_config(ENV_FLASK_DEBUG, "false").lower() in ("1", "true")
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+ 
     app.run(host="0.0.0.0", port=port, debug=debug)
