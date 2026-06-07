@@ -33,6 +33,7 @@ class DataTransformationSplitTest(unittest.TestCase):
                 test_size=0.25,
                 random_state=42,
                 stratify_column="quality",
+                use_scaler=False,
             )
 
             DataTransformation(config).train_test_spliting()
