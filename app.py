@@ -3,16 +3,39 @@ import os
 import numpy as np
 import pandas as pd
 from mlProject.pipeline.prediction import PredictionPipeline
+from mlProject.config.configuration import ConfigurationManager
+from mlProject.constants import ENV_FLASK_PORT, ENV_FLASK_DEBUG, ENV_TAG
+from mlProject.utils.common import load_env_file, get_env_or_config
 from pathlib import Path
 import subprocess
 import threading
+import sys
+
+load_env_file()
 
 app = Flask(__name__)
 
-# This is our "is training running?" flag
 training_lock = threading.Lock()
 is_training = False
 training_log = []
+
+
+def validate_config_at_startup():
+    """Validate all required configs are present before starting the server."""
+    required_configs = [
+        ("config/config.yaml", "Main configuration file"),
+        ("params.yaml", "Parameters file"),
+        ("schema.yaml", "Schema file"),
+    ]
+    missing = []
+    for path, desc in required_configs:
+        if not Path(path).exists():
+            missing.append(f"{desc} ({path})")
+    if missing:
+        print(f"ERROR: Missing required configuration files: {', '.join(missing)}")
+        sys.exit(1)
+    print(f"Configuration validation passed. Environment: {os.environ.get(ENV_TAG, 'development')}")
+
 
 def run_training_in_background():
     """Run training in background so web app doesn't freeze"""
@@ -35,11 +58,16 @@ def run_training_in_background():
     except Exception as e:
         training_log.append(f"Training error: {e}")
     finally:
-        is_training = False  # reset the flag when done
+        is_training = False
 
 def ensure_model_trained():
     """Auto-train model if it doesn't exist"""
-    model_path = Path('artifacts/model_trainer/model.joblib')
+    try:
+        config_manager = ConfigurationManager()
+        eval_config = config_manager.get_model_evaluation_config()
+        model_path = eval_config.model_path
+    except Exception:
+        model_path = Path('artifacts/model_trainer/model.joblib')
     if not model_path.exists():
         print("Model not found. Starting automatic training...")
         try:
@@ -124,5 +152,8 @@ def index():
 
 if __name__ == "__main__":
     print("Starting Wine Quality Prediction App...")
+    validate_config_at_startup()
     ensure_model_trained()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=True)
+    port = int(get_env_or_config(ENV_FLASK_PORT, "8080", transform=int))
+    debug = get_env_or_config(ENV_FLASK_DEBUG, "false").lower() in ("1", "true")
+    app.run(host="0.0.0.0", port=port, debug=debug)

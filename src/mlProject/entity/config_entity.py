@@ -9,6 +9,8 @@ class DataIngestionConfig:
     source_URL: str
     local_data_file: Path
     unzip_dir: Path
+    override_root_dir: Optional[Path] = None
+    override_source_URL: Optional[str] = None
 
 @dataclass(frozen=True)
 class DataValidationConfig:
@@ -17,6 +19,8 @@ class DataValidationConfig:
     data_file: Path
     all_schema: dict
     drift_threshold: float = 0.05
+    override_root_dir: Optional[Path] = None
+    override_drift_threshold: Optional[float] = None
 
 @dataclass(frozen=True)
 class DataTransformationConfig:
@@ -25,6 +29,10 @@ class DataTransformationConfig:
     test_size: float
     random_state: int
     stratify_column: Optional[str]
+    use_scaler: bool = True
+    scaler_type: str = "standard"
+    override_root_dir: Optional[Path] = None
+    override_test_size: Optional[float] = None
 
 @dataclass(frozen=True)
 class ModelTrainerConfig:
@@ -35,6 +43,9 @@ class ModelTrainerConfig:
     alpha: float
     l1_ratio: float
     target_column: str
+    override_root_dir: Optional[Path] = None
+    override_alpha: Optional[float] = None
+    override_l1_ratio: Optional[float] = None
 
 @dataclass(frozen=True)
 class ModelEvaluationConfig:
@@ -44,3 +55,12 @@ class ModelEvaluationConfig:
     all_params: dict
     metric_file_name: Path
     target_column: str
+    override_root_dir: Optional[Path] = None
+
+@dataclass(frozen=True)
+class ModelRegistryConfig:
+    registry_path: Path
+    production_alias: str = "production"
+    staging_alias: str = "staging"
+    max_versions_to_keep: int = 10
+    quality_gate_max_rmse_degradation_pct: float = 5.0

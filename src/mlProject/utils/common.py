@@ -8,6 +8,35 @@ from ensure import ensure_annotations
 from box import ConfigBox
 from pathlib import Path
 from typing import Any
+from dotenv import load_dotenv
+
+
+def load_env_file(env_path: Path = None):
+    """Load .env file from the given path or default .env in project root."""
+    dotenv_path = env_path or Path(".env")
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path=dotenv_path, override=True)
+        logger.info(f"Loaded environment from {dotenv_path}")
+    else:
+        logger.info("No .env file found, using system environment variables")
+
+
+def get_env_or_config(env_var: str, config_value, transform=None):
+    """Return env var value if set, otherwise fall back to config value.
+    
+    Priority: Environment variable > .env > YAML config value.
+    """
+    env_val = os.environ.get(env_var)
+    if env_val is not None:
+        logger.info(f"Overriding config key {env_var} from environment")
+        if transform:
+            try:
+                return transform(env_val)
+            except (ValueError, TypeError):
+                logger.warning(f"Could not transform env var {env_var}={env_val}, using config default")
+                return config_value
+        return env_val
+    return config_value
 
 
 

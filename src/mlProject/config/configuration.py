@@ -1,12 +1,14 @@
+import os
 from pathlib import Path
 from mlProject.constants import *
 from mlProject import logger
-from mlProject.utils.common import read_yaml, create_directories
+from mlProject.utils.common import read_yaml, create_directories, get_env_or_config, load_env_file
 from mlProject.entity.config_entity import (DataIngestionConfig,
                                             DataValidationConfig,
                                             DataTransformationConfig,
                                             ModelTrainerConfig,
-                                            ModelEvaluationConfig)
+                                            ModelEvaluationConfig,
+                                            ModelRegistryConfig)
 
 
 class ConfigurationManager:
@@ -16,11 +18,13 @@ class ConfigurationManager:
         params_filepath: Path = PARAMS_FILE_PATH,
         schema_filepath: Path = SCHEMA_FILE_PATH):
 
+        load_env_file()
         self.config = read_yaml(config_filepath)
         self.params = read_yaml(params_filepath)
         self.schema = read_yaml(schema_filepath)
 
-        create_directories([self.config.artifacts_root])
+        artifacts_root = get_env_or_config(ENV_ARTIFACTS_ROOT, self.config.artifacts_root)
+        create_directories([artifacts_root])
 
 
     def _validate_config_keys(self, config_section: dict, required_keys: list, section_name: str):
@@ -34,13 +38,16 @@ class ConfigurationManager:
         config = self.config.data_ingestion
         self._validate_config_keys(config, ["root_dir", "source_URL", "local_data_file", "unzip_dir"], "data_ingestion")
 
-        create_directories([config.root_dir])
+        root_dir = get_env_or_config(ENV_DATA_INGESTION_ROOT_DIR, config.root_dir)
+        source_URL = get_env_or_config(ENV_DATA_INGESTION_SOURCE_URL, config.source_URL)
+
+        create_directories([root_dir])
 
         data_ingestion_config = DataIngestionConfig(
-            root_dir=Path(config.root_dir),
-            source_URL=config.source_URL,
-            local_data_file=Path(config.local_data_file),
-            unzip_dir=Path(config.unzip_dir) 
+            root_dir=Path(root_dir),
+            source_URL=source_URL,
+            local_data_file=Path(get_env_or_config(ENV_DATA_INGESTION_LOCAL_DATA_FILE, config.local_data_file)),
+            unzip_dir=Path(get_env_or_config(ENV_DATA_INGESTION_UNZIP_DIR, config.unzip_dir))
         )
 
         return data_ingestion_config
@@ -51,14 +58,19 @@ class ConfigurationManager:
         schema = self.schema.COLUMNS
         self._validate_config_keys(config, ["root_dir", "STATUS_FILE", "data_file"], "data_validation")
 
-        create_directories([config.root_dir])
+        root_dir = get_env_or_config(ENV_DATA_VALIDATION_ROOT_DIR, config.root_dir)
+        create_directories([root_dir])
 
-        drift_threshold = self.params.get("DataValidation", {}).get("drift_threshold", 0.05)
+        drift_threshold = float(get_env_or_config(
+            ENV_DATA_VALIDATION_DRIFT_THRESHOLD,
+            self.params.get("DataValidation", {}).get("drift_threshold", 0.05),
+            transform=float
+        ))
 
         data_validation_config = DataValidationConfig(
-            root_dir=Path(config.root_dir),
-            STATUS_FILE=Path(config.STATUS_FILE),
-            data_file = Path(config.data_file),
+            root_dir=Path(root_dir),
+            STATUS_FILE=Path(get_env_or_config(ENV_DATA_VALIDATION_STATUS_FILE, config.STATUS_FILE)),
+            data_file=Path(get_env_or_config(ENV_DATA_VALIDATION_DATA_FILE, config.data_file)),
             all_schema=schema,
             drift_threshold=drift_threshold,
         )
@@ -70,14 +82,20 @@ class ConfigurationManager:
         params = self.params.DataTransformation
         self._validate_config_keys(config, ["root_dir", "data_path"], "data_transformation")
 
-        create_directories([config.root_dir])
+        root_dir = get_env_or_config(ENV_DATA_TRANSFORMATION_ROOT_DIR, config.root_dir)
+        create_directories([root_dir])
+
+        use_scaler = os.environ.get(ENV_USE_SCALER, "true").lower() in ("1", "true", "yes")
+        scaler_type = os.environ.get(ENV_SCALER_TYPE, params.get("feature_scaling", {}).get("method", "standard"))
 
         data_transformation_config = DataTransformationConfig(
-            root_dir=Path(config.root_dir),
-            data_path=Path(config.data_path),
+            root_dir=Path(root_dir),
+            data_path=Path(get_env_or_config(ENV_DATA_TRANSFORMATION_DATA_PATH, config.data_path)),
             test_size=params.test_size,
             random_state=params.random_state,
             stratify_column=params.stratify_column,
+            use_scaler=use_scaler,
+            scaler_type=scaler_type,
         )
 
         return data_transformation_config
@@ -88,17 +106,17 @@ class ConfigurationManager:
         schema = self.schema.TARGET_COLUMN
         self._validate_config_keys(config, ["root_dir", "train_data_path", "test_data_path", "model_name"], "model_trainer")
 
-        create_directories([config.root_dir])
+        root_dir = get_env_or_config(ENV_MODEL_TRAINER_ROOT_DIR, config.root_dir)
+        create_directories([root_dir])
 
         model_trainer_config = ModelTrainerConfig(
-            root_dir=Path(config.root_dir),
-            train_data_path = Path(config.train_data_path),
-            test_data_path = Path(config.test_data_path),
-            model_name = config.model_name,
-            alpha = params.alpha,
-            l1_ratio = params.l1_ratio,
-            target_column = schema.name
-            
+            root_dir=Path(root_dir),
+            train_data_path=Path(get_env_or_config(ENV_MODEL_TRAINER_TRAIN_DATA_PATH, config.train_data_path)),
+            test_data_path=Path(get_env_or_config(ENV_MODEL_TRAINER_TEST_DATA_PATH, config.test_data_path)),
+            model_name=get_env_or_config(ENV_MODEL_TRAINER_MODEL_NAME, config.model_name),
+            alpha=float(get_env_or_config("ENV_ELASTICNET_ALPHA", params.alpha, transform=float)),
+            l1_ratio=float(get_env_or_config("ENV_ELASTICNET_L1_RATIO", params.l1_ratio, transform=float)),
+            target_column=schema.name
         )
 
         return model_trainer_config
@@ -109,16 +127,33 @@ class ConfigurationManager:
         schema = self.schema.TARGET_COLUMN
         self._validate_config_keys(config, ["root_dir", "test_data_path", "model_path", "metric_file_name"], "model_evaluation")
 
-        create_directories([config.root_dir])
+        root_dir = get_env_or_config(ENV_MODEL_EVALUATION_ROOT_DIR, config.root_dir)
+        create_directories([root_dir])
 
         model_evaluation_config = ModelEvaluationConfig(
-            root_dir=Path(config.root_dir),
-            test_data_path=Path(config.test_data_path),
-            model_path = Path(config.model_path),
+            root_dir=Path(root_dir),
+            test_data_path=Path(get_env_or_config(ENV_MODEL_EVALUATION_TEST_DATA_PATH, config.test_data_path)),
+            model_path=Path(get_env_or_config(ENV_MODEL_EVALUATION_MODEL_PATH, config.model_path)),
             all_params=params,
-            metric_file_name = Path(config.metric_file_name),
-            target_column = schema.name
-           
+            metric_file_name=Path(get_env_or_config(ENV_MODEL_EVALUATION_METRIC_FILE_NAME, config.metric_file_name)),
+            target_column=schema.name
         )
 
         return model_evaluation_config
+
+    def get_model_registry_config(self) -> ModelRegistryConfig:
+        registry_path = get_env_or_config(ENV_MODEL_REGISTRY_PATH, "artifacts/model_registry.json")
+        production_alias = get_env_or_config(ENV_MODEL_REGISTRY_PRODUCTION_ALIAS, "production")
+        staging_alias = get_env_or_config(ENV_MODEL_REGISTRY_STAGING_ALIAS, "staging")
+        max_versions_to_keep = int(get_env_or_config(ENV_MODEL_REGISTRY_MAX_VERSIONS_TO_KEEP, "10", transform=int))
+        quality_gate_max_rmse_degradation_pct = float(get_env_or_config(
+            ENV_MODEL_REGISTRY_QUALITY_GATE_MAX_RMSE_DEGRADATION_PCT, "5.0", transform=float
+        ))
+
+        return ModelRegistryConfig(
+            registry_path=Path(registry_path),
+            production_alias=production_alias,
+            staging_alias=staging_alias,
+            max_versions_to_keep=max_versions_to_keep,
+            quality_gate_max_rmse_degradation_pct=quality_gate_max_rmse_degradation_pct,
+        )
