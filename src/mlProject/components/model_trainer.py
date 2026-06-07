@@ -35,7 +35,11 @@ class ModelTrainer:
             raise
 
         try:
-            joblib.dump(lr, os.path.join(self.config.root_dir, self.config.model_name))
+            model_path = os.path.join(self.config.root_dir, self.config.model_name)
+            joblib.dump(lr, model_path)
+            checksum_path = model_path + ".sha256"
+            from mlProject.utils.common import save_checksum
+            save_checksum(Path(model_path), Path(checksum_path))
         except Exception as e:
             logger.exception(f"Failed to save model to {self.config.model_name}")
             raise

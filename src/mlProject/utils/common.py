@@ -1,4 +1,5 @@
 import os
+import hashlib
 from box.exceptions import BoxValueError
 import yaml
 from mlProject import logger
@@ -161,3 +162,62 @@ def get_size(path: Path) -> str:
     """
     size_in_kb = round(os.path.getsize(path)/1024)
     return f"~ {size_in_kb} KB"
+
+
+@ensure_annotations
+def compute_checksum(path: Path) -> str:
+    """Compute SHA-256 checksum of a file.
+
+    Args:
+        path (Path): path to the file
+
+    Returns:
+        str: hex digest of SHA-256 hash
+    """
+    sha256 = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+
+@ensure_annotations
+def save_checksum(model_path: Path, checksum_path: Path):
+    """Compute SHA-256 of model file and save it to a sidecar file.
+
+    Args:
+        model_path (Path): path to the model file
+        checksum_path (Path): path to the checksum sidecar file
+    """
+    checksum = compute_checksum(model_path)
+    checksum_path.write_text(checksum)
+    logger.info(f"Checksum saved to {checksum_path}")
+
+
+@ensure_annotations
+def verify_model_integrity(model_path: Path, checksum_path: Path) -> bool:
+    """Verify model file integrity against its stored SHA-256 checksum.
+
+    Args:
+        model_path (Path): path to the model file
+        checksum_path (Path): path to the checksum sidecar file
+
+    Returns:
+        bool: True if checksum matches, False otherwise
+    """
+    if not checksum_path.exists():
+        logger.error(f"Checksum file not found: {checksum_path}")
+        return False
+    if not model_path.exists():
+        logger.error(f"Model file not found: {model_path}")
+        return False
+    expected = checksum_path.read_text().strip()
+    actual = compute_checksum(model_path)
+    if expected != actual:
+        logger.error(
+            f"Model integrity check FAILED for {model_path}. "
+            f"Expected checksum: {expected}, Actual: {actual}"
+        )
+        return False
+    logger.info(f"Model integrity verified for {model_path}")
+    return True
