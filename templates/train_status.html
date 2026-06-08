@@ -50,7 +50,7 @@
         {% if training_log %}
         <details class="log-box">
             <summary>View Training Logs</summary>
-            <pre>{{ training_log }}</pre>
+            <pre>{{ training_log | e }}</pre>
         </details>
         {% endif %}
     </main>

@@ -138,8 +138,15 @@ def ensure_model_trained() -> None:
     if not model_path.exists():
         print("Model not found - starting automatic training...")
         try:
-            os.system("python main.py")
-            print("Auto-training completed!")
+            result = subprocess.run(
+                ["python", "main.py"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                print("Auto-training completed!")
+            else:
+                print(f"Auto-training failed:\n{result.stderr}")
         except Exception as exc:
             print(f"Auto-training failed: {exc}")
     else:
