@@ -11,6 +11,7 @@ from mlProject.utils.common import save_json
 from mlProject.utils.model_registry import (
     load_registry, register_model,
 )
+from mlProject.components.data_transformation import NUMERIC_FEATURES
 from pathlib import Path
 
 
@@ -60,6 +61,24 @@ class ModelEvaluation:
 
         test_x = test_data.drop([self.config.target_column], axis=1)
         test_y = test_data[[self.config.target_column]]
+
+        preprocessor = None
+        if self.config.preprocessor_path and self.config.preprocessor_path.exists():
+            try:
+                preprocessor = joblib.load(self.config.preprocessor_path)
+                logger.info(f"Preprocessor loaded from {self.config.preprocessor_path}")
+            except Exception as e:
+                logger.warning(f"Could not load preprocessor: {e}")
+
+        if preprocessor is not None:
+            expected_cols = len(NUMERIC_FEATURES)
+            if test_x.shape[1] != expected_cols:
+                logger.warning(
+                    f"test_x has {test_x.shape[1]} columns but preprocessor "
+                    f"expects {expected_cols}. Selecting NUMERIC_FEATURES."
+                )
+                test_x = test_x[NUMERIC_FEATURES]
+            test_x = preprocessor.transform(test_x)
         
         try:
             predicted_qualities = model.predict(test_x)
