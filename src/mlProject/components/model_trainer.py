@@ -31,18 +31,51 @@ class ModelTrainer:
         train_y = train_data[[self.config.target_column]]
         test_y = test_data[[self.config.target_column]]
 
-        try:
-            lr = ElasticNet(alpha=self.config.alpha, l1_ratio=self.config.l1_ratio, random_state=42)
-            lr.fit(train_x, train_y)
-        except Exception as e:
-            logger.exception("Failed to train model")
-            raise
+        # Load preprocessor if available (from data_transformation stage)
+        preprocessor = None
+        preprocessor_path = Path('artifacts/data_transformation/preprocessor.joblib')
+        if preprocessor_path.exists():
+            try:
+                preprocessor = joblib.load(preprocessor_path)
+                logger.info(f"Loaded preprocessor from {preprocessor_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load preprocessor: {e}. Training model without preprocessor.")
+        
+        # Create unified pipeline: preprocessor + model
+        if preprocessor is not None:
+            # Preprocess training data using the loaded preprocessor
+            train_x_transformed = preprocessor.transform(train_x)
+            test_x_transformed = preprocessor.transform(test_x)
+            
+            # Train model on transformed data
+            try:
+                lr = ElasticNet(alpha=self.config.alpha, l1_ratio=self.config.l1_ratio, random_state=42)
+                lr.fit(train_x_transformed, train_y)
+            except Exception as e:
+                logger.exception("Failed to train model")
+                raise
+            
+            # Create unified pipeline for inference
+            unified_pipeline = Pipeline(steps=[
+                ("preprocessor", preprocessor),
+                ("model", lr),
+            ])
+            logger.info("Created unified pipeline: preprocessor + model")
+        else:
+            # Train model directly on raw data if no preprocessor
+            try:
+                lr = ElasticNet(alpha=self.config.alpha, l1_ratio=self.config.l1_ratio, random_state=42)
+                lr.fit(train_x, train_y)
+                unified_pipeline = lr
+            except Exception as e:
+                logger.exception("Failed to train model")
+                raise
 
         version_id = get_version_id()
         model_filename = f"model_{version_id}.joblib"
         model_path_str = os.path.join(self.config.root_dir, model_filename)
         try:
-            joblib.dump(lr, model_path_str)
+            joblib.dump(unified_pipeline, model_path_str)
             checksum_path = model_path_str + ".sha256"
             from mlProject.utils.common import save_checksum
             save_checksum(Path(model_path_str), Path(checksum_path))
@@ -76,9 +109,9 @@ class ModelTrainer:
             logger.warning(f"Failed to register model in registry: {e}")
 
         stable_path = os.path.join(self.config.root_dir, self.config.model_name)
-        joblib.dump(lr, stable_path)
+        joblib.dump(unified_pipeline, stable_path)
 
-        logger.info(f"Model {version_id} trained and saved to {stable_path}")
+        logger.info(f"Unified pipeline (preprocessor + model) {version_id} trained and saved to {stable_path}")
         logger.info(f"Train X shape: {train_x.shape}, Test X shape: {test_x.shape}")
 
         
