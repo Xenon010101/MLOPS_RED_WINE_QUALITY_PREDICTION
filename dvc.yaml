@@ -25,6 +25,7 @@ stages:
       - artifacts/data_ingestion/winequality-red.csv
     outs:
       - artifacts/data_validation/status.txt
+      - artifacts/reference_data.csv
 
   data_transformation:
     cmd: python src/mlProject/pipeline/stage_03_data_transformation.py

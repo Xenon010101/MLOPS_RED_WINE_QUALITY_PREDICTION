@@ -20,6 +20,7 @@ class DataValidationConfig:
     data_file: Path
     all_schema: dict
     drift_threshold: float = 0.05
+    reference_data_path: Path = Path("artifacts/reference_data.csv")
     override_root_dir: Optional[Path] = None
     override_drift_threshold: Optional[float] = None
 

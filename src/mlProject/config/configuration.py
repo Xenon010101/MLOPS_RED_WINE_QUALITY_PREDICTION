@@ -70,12 +70,18 @@ class ConfigurationManager:
             transform=float
         ))
 
+        reference_data_path = get_env_or_config(
+            ENV_DATA_VALIDATION_REFERENCE_DATA_PATH,
+            config.get("reference_data_path", "artifacts/reference_data.csv"),
+        )
+
         data_validation_config = DataValidationConfig(
             root_dir=Path(root_dir),
             STATUS_FILE=Path(get_env_or_config(ENV_DATA_VALIDATION_STATUS_FILE, config.STATUS_FILE)),
             data_file=Path(get_env_or_config(ENV_DATA_VALIDATION_DATA_FILE, config.data_file)),
             all_schema=schema,
             drift_threshold=drift_threshold,
+            reference_data_path=Path(reference_data_path),
         )
 
         return data_validation_config

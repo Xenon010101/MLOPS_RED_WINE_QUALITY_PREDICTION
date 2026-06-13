@@ -80,18 +80,30 @@ class DataValidator:
         schema_valid, schema_errors = self.schema_validator.validate(data)
         
         # Load reference data (training distribution) for drift detection
-        reference_data = data
-        reference_data_path = Path("artifacts") / "reference_data.csv"
+        reference_data_path = self.config.reference_data_path
         if reference_data_path.exists():
             try:
                 reference_data = pd.read_csv(reference_data_path)
                 logger.info(f"Loaded reference data from {reference_data_path}")
             except Exception as e:
-                logger.warning(f"Failed to load reference data from {reference_data_path}: {e}. Using current data as reference.")
+                logger.warning(f"Failed to load reference data: {e}")
+                reference_data = None
         else:
-            logger.warning(f"Reference data not found at {reference_data_path}. Using current data as reference.")
-        
-        drift_detected, drift_scores = self.drift_detector.detect(reference_data, data)
+            logger.info(f"Reference data not found at {reference_data_path}. Saving current data as reference for future runs.")
+            data.to_csv(reference_data_path, index=False)
+            logger.info(f"Created reference data snapshot at {reference_data_path}")
+            reference_data = None
+
+        if reference_data is not None:
+            drift_detected, drift_scores = self.drift_detector.detect(reference_data, data)
+            if drift_detected:
+                logger.error(
+                    f"Data drift detected! Threshold: {self.config.drift_threshold}. "
+                    f"Drift scores: {drift_scores}"
+                )
+        else:
+            drift_detected = False
+            drift_scores = {}
 
         all_errors = list(schema_errors)
         validation_status = schema_valid and not drift_detected

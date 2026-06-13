@@ -25,6 +25,7 @@ data_validation:
   root_dir: artifacts/data_validation
   data_file: artifacts/data_ingestion/winequality-red.csv
   STATUS_FILE: artifacts/data_validation/status.txt
+  reference_data_path: artifacts/reference_data.csv
 
 # Data Transformation Stage
 # Splits data into train/test sets with optional preprocessing
