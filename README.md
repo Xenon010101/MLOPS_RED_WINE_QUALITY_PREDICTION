@@ -144,6 +144,16 @@ dvc status
 
 The tracked outputs are stored under `artifacts/`, while the pipeline definition lives in `dvc.yaml`.
 
+### dvc pipeline stages
+
+| stage name | description | target source / inputs | generated artifacts |
+| :--- | :--- | :--- | :--- |
+| `data_ingestion` | downloads and extracts the raw wine dataset | `config/config.yaml` | `artifacts/data_ingestion/` |
+| `data_validation` | verifies data types against project schema | `schema.yaml` | `artifacts/data_validation/` |
+| `data_transformation` | handles train/test splitting and processing | `artifacts/data_ingestion/` | `artifacts/data_transformation/` |
+| `model_trainer` | trains the elasticnet regression model | `params.yaml` | `artifacts/model_trainer/model.joblib` |
+| `model_evaluation` | calculates rmse, mae, and r2 performance metrics | `artifacts/model_trainer/` | `artifacts/model_evaluation/metrics.json` |
+
 ## 🚀 Deployment & CI/CD
 
 - **Automatic Deployment**: Push to `main` branch triggers deployment
@@ -196,6 +206,14 @@ data = {
 response = requests.post('http://localhost:8080/predict', data=data)
 print(response.text)
 ```
+
+### production flask endpoints
+
+| route path | http method | function | authentication / security |
+| :--- | :--- | :--- | :--- |
+| `/` | `GET` | renders the web portal frontend dashboard ui | none (public access) |
+| `/train` | `GET` / `POST` | triggers manual pipeline retraining sequence | gated via secure token / atomic lock |
+| `/predict` | `POST` | receives wine vector attributes to compute quality matrix | none (public inference api) |
 
 ## 🔧 Development
 
