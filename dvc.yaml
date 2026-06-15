@@ -56,7 +56,6 @@ stages:
       - params.yaml
       - schema.yaml
       - artifacts/data_transformation/train.csv
-      - artifacts/data_transformation/test.csv
       - artifacts/data_transformation/preprocessor.joblib
     outs:
       - artifacts/model_trainer/model.joblib

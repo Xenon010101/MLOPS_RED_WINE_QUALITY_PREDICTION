@@ -22,7 +22,6 @@ class ModelTrainer:
     def train(self):
         try:
             train_data = pd.read_csv(self.config.train_data_path)
-            test_data = pd.read_csv(self.config.test_data_path)
         except FileNotFoundError as e:
             logger.error(f"Training data file not found: {e.filename}")
             raise
@@ -31,9 +30,7 @@ class ModelTrainer:
             raise
 
         train_x = train_data.drop([self.config.target_column], axis=1)
-        test_x = test_data.drop([self.config.target_column], axis=1)
         train_y = train_data[[self.config.target_column]]
-        test_y = test_data[[self.config.target_column]]
 
         # Load preprocessor if available (from data_transformation stage)
         preprocessor = None
@@ -54,10 +51,8 @@ class ModelTrainer:
                     f"expects {expected_cols}. Selecting NUMERIC_FEATURES."
                 )
                 train_x = train_x[NUMERIC_FEATURES]
-                test_x = test_x[NUMERIC_FEATURES]
 
             train_x_preprocessed = preprocessor.transform(train_x)
-            test_x_preprocessed = preprocessor.transform(test_x)
 
             if train_x_preprocessed.shape[1] <= train_x.shape[1]:
                 logger.warning(
@@ -82,7 +77,6 @@ class ModelTrainer:
         else:
             # Train model directly on raw data if no preprocessor
             train_x_preprocessed = train_x
-            test_x_preprocessed = test_x
             try:
                 lr = ElasticNet(alpha=self.config.alpha, l1_ratio=self.config.l1_ratio, random_state=42)
                 lr.fit(train_x_preprocessed, train_y)
@@ -138,6 +132,6 @@ class ModelTrainer:
             json.dump(model_info, f, indent=2)
 
         logger.info(f"Unified pipeline (preprocessor + model) {version_id} trained and saved to {stable_path}")
-        logger.info(f"Train X shape: {train_x_preprocessed.shape}, Test X shape: {test_x_preprocessed.shape}")
+        logger.info(f"Train X shape: {train_x_preprocessed.shape}")
 
         
