@@ -120,7 +120,17 @@ def register_model(
             }
             registry["versions"].insert(0, entry)
             if len(registry["versions"]) > max_versions_to_keep:
+                archived = registry["versions"][max_versions_to_keep:]
                 registry["versions"] = registry["versions"][:max_versions_to_keep]
+                for v in archived:
+                    archived_path = Path(v["path"])
+                    if archived_path.exists():
+                        archived_path.unlink()
+                        logger.info(f"Deleted archived model file: {archived_path}")
+                    sha_path = Path(str(archived_path) + ".sha256")
+                    if sha_path.exists():
+                        sha_path.unlink()
+                        logger.info(f"Deleted archived checksum: {sha_path}")
             save_registry(registry_path, registry)
             return entry
 
