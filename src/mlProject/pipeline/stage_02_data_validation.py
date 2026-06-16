@@ -15,6 +15,10 @@ class DataValidationTrainingPipeline:
         data_validation = DataValidator(config=data_validation_config)
         result = data_validation.run()
         logger.info(f"Validation result: schema_valid={result.schema_valid}, drift_detected={result.drift_detected}")
+        if not result.schema_valid:
+            raise ValueError(f"Data validation failed due to invalid schema. Errors: {result.errors}")
+        if result.drift_detected:
+            raise ValueError(f"Data validation failed due to data drift. Scores: {result.drift_scores}")
 
 
 if __name__ == "__main__":
