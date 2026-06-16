@@ -112,15 +112,6 @@ class ModelTrainer:
             "l1_ratio": self.config.l1_ratio,
         }
 
-        stable_path = os.path.join(self.config.root_dir, self.config.model_name)
-        with tempfile.NamedTemporaryFile(dir=self.config.root_dir, suffix='.joblib', delete=False) as tmp:
-            stable_tmp_path = tmp.name
-            joblib.dump(unified_pipeline, stable_tmp_path)
-        os.replace(stable_tmp_path, stable_path)
-        stable_checksum_path = Path(stable_path + ".sha256")
-        from mlProject.utils.common import save_checksum
-        save_checksum(Path(stable_path), stable_checksum_path)
-
         model_info = {
             "version_id": version_id,
             "model_path": str(model_path),
@@ -131,7 +122,7 @@ class ModelTrainer:
         with open(model_info_path, "w") as f:
             json.dump(model_info, f, indent=2)
 
-        logger.info(f"Unified pipeline (preprocessor + model) {version_id} trained and saved to {stable_path}")
+        logger.info(f"Unified pipeline (preprocessor + model) {version_id} trained and saved to {model_path}")
         logger.info(f"Train X shape: {train_x_preprocessed.shape}")
 
         

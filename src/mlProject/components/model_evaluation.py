@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import pandas as pd
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from urllib.parse import urlparse
@@ -8,7 +9,7 @@ import joblib
 from mlProject import logger
 from mlProject.config.configuration import ConfigurationManager
 from mlProject.entity.config_entity import ModelEvaluationConfig
-from mlProject.utils.common import save_json
+from mlProject.utils.common import save_json, save_checksum
 from mlProject.utils.model_registry import (
     load_registry, register_model, update_registration,
 )
@@ -142,6 +143,16 @@ class ModelEvaluation:
                 data_hash=data_hash,
                 quality_gate_max_rmse_degradation_pct=quality_gate,
             )
+
+        # Promote versioned model to stable path only if quality gate passed
+        registry = load_registry(registry_path)
+        if registry.get("production") == version_id:
+            stable_path = self.config.model_path
+            stable_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(versioned_model_path), str(stable_path))
+            stable_checksum_path = Path(str(stable_path) + ".sha256")
+            save_checksum(stable_path, stable_checksum_path)
+            logger.info(f"Model {version_id} promoted to stable path: {stable_path}")
 
         previous_metrics = self._load_previous_metrics(registry_path)
         if previous_metrics:

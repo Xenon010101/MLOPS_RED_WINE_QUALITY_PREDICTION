@@ -1,3 +1,4 @@
+import json
 import joblib
 import numpy as np
 import pandas as pd
@@ -5,7 +6,7 @@ from pathlib import Path
 from mlProject.components.data_transformation import NUMERIC_FEATURES
 from mlProject.config.configuration import ConfigurationManager
 from mlProject.utils.common import load_env_file
-from mlProject.utils.model_registry import get_production_model_path
+from mlProject.utils.model_registry import get_production_model_path, load_registry
 from mlProject import logger
 
 class PredictionPipeline:
@@ -26,6 +27,28 @@ class PredictionPipeline:
                     self._model_path = model_eval_config.model_path
             except Exception:
                 self._model_path = Path('artifacts/model_trainer/model.joblib')
+
+        # Verify loaded model matches registry production version
+        if self._model_path is not None and self._model_path.name == "model.joblib":
+            try:
+                model_info_path = self._model_path.parent / "model_info.json"
+                if model_info_path.exists():
+                    with open(model_info_path) as f:
+                        model_info = json.load(f)
+                    loaded_version = model_info.get("version_id")
+                    if loaded_version:
+                        cm = ConfigurationManager()
+                        reg_cfg = cm.get_model_registry_config()
+                        registry = load_registry(reg_cfg.registry_path)
+                        prod_version = registry.get("production")
+                        if prod_version and loaded_version != prod_version:
+                            logger.critical(
+                                f"Loaded model version {loaded_version} does not match "
+                                f"registry production version {prod_version}. "
+                                f"Predictions may be stale."
+                            )
+            except Exception:
+                pass
 
     def predict(self, data):
         model_path = self._model_path or Path('artifacts/model_trainer/model.joblib')

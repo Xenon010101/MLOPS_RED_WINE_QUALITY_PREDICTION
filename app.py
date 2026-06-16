@@ -246,11 +246,29 @@ def ensure_model_trained() -> None:
             print(f"Auto-training failed: {exc}")
     else:
         from mlProject.utils.common import verify_model_integrity
+        from mlProject.utils.model_registry import load_registry
         checksum_path = Path(str(model_path) + ".sha256")
         if not verify_model_integrity(model_path, checksum_path):
             print("Model integrity check FAILED - consider retraining.")
         else:
             print("Model already exists - ready for predictions!")
+        # Check if active model matches registry production version
+        try:
+            registry_path = _get_registry_path()
+            registry = load_registry(registry_path)
+            prod_id = registry.get("production")
+            model_info_path = model_path.parent / "model_info.json"
+            if prod_id and model_info_path.exists():
+                with open(model_info_path) as f:
+                    model_info = json.load(f)
+                loaded_version = model_info.get("version_id")
+                if loaded_version and loaded_version != prod_id:
+                    print(
+                        f"WARNING: Active model version {loaded_version} does not match "
+                        f"registry production version {prod_id}."
+                    )
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +283,25 @@ def homePage():
 @app.route("/health", methods=["GET"])
 def health():
     """Lightweight liveness probe for uptime monitors and load balancers."""
-    return jsonify({"status": "ok", "is_training": is_training}), 200
+    health_data = {"status": "ok", "is_training": is_training}
+    try:
+        registry_path = _get_registry_path()
+        registry = load_registry(registry_path)
+        prod_id = registry.get("production")
+        health_data["production_version"] = prod_id
+        model_path = Path("artifacts/model_trainer/model.joblib")
+        if model_path.exists():
+            model_info_path = model_path.parent / "model_info.json"
+            if model_info_path.exists():
+                with open(model_info_path) as f:
+                    model_info = json.load(f)
+                loaded_version = model_info.get("version_id")
+                health_data["active_model_version"] = loaded_version
+                if prod_id and loaded_version and loaded_version != prod_id:
+                    health_data["version_mismatch"] = True
+    except Exception:
+        pass
+    return jsonify(health_data), 200
 
 
 @app.route("/train", methods=["GET"])
