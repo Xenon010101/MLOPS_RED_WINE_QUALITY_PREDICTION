@@ -35,7 +35,7 @@ class ModelTrainer:
         # Load preprocessor if available (from data_transformation stage)
         preprocessor = None
         preprocessor_path = self.config.preprocessor_path or Path('artifacts/data_transformation/preprocessor.joblib')
-        if preprocessor_path.exists():
+        if self.config.use_scaler and preprocessor_path.exists():
             try:
                 preprocessor = joblib.load(preprocessor_path)
                 logger.info(f"Loaded preprocessor from {preprocessor_path}")
