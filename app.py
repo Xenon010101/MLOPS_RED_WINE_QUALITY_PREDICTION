@@ -440,13 +440,11 @@ def _shutdown_handler(signum, frame):
 
 
 # ---------------------------------------------------------------------------
-# Startup initialisation — runs at import time so Gunicorn workers inherit
-# signal handlers and the model is trained before the first request.
+# Startup signal handlers — runs at import time so Gunicorn workers inherit.
 # ---------------------------------------------------------------------------
 signal.signal(signal.SIGTERM, _shutdown_handler)
 signal.signal(signal.SIGINT, _shutdown_handler)
 validate_config_at_startup()
-ensure_model_trained()
 
 
 if __name__ == "__main__":
