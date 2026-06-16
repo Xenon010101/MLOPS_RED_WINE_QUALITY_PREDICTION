@@ -37,6 +37,7 @@ from pathlib import Path
 from mlProject.config.configuration import ConfigurationManager
 from mlProject.constants import ENV_FLASK_PORT, ENV_FLASK_DEBUG, ENV_TAG
 from mlProject.pipeline.prediction import PredictionPipeline
+from mlProject import logger
 from mlProject.utils.common import load_env_file, get_env_or_config
 from mlProject.utils.model_registry import load_registry, rollback_to_version
 
@@ -346,15 +347,21 @@ def index():
 
             return render_template("results.html", prediction=final_prediction)
 
-        except Exception as exc:
-            print("The Exception message is: ", exc)
+        except ValueError as exc:
+            logger.error(f"Validation error in /predict: {exc}")
             return render_template(
                 "results.html",
                 error_msg=(
                     "Unable to compute prediction. "
                     "Please ensure all fields are filled with valid numbers."
                 ),
-            )
+            ), 400
+        except Exception as exc:
+            logger.error(f"Unexpected error in /predict: {exc}")
+            return render_template(
+                "results.html",
+                error_msg="An unexpected error occurred. Please try again.",
+            ), 500
     else:
         return render_template("index.html")
 
