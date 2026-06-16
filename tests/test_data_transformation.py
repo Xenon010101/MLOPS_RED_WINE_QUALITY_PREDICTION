@@ -132,8 +132,8 @@ class TestPreprocessing(unittest.TestCase):
 
     def test_build_preprocessing_pipeline_honors_feature_engineering_flags(self):
         config = DataTransformationConfig(
-            root_dir=Path("/tmp"),
-            data_path=Path("/tmp/wine.csv"),
+            root_dir=Path("artifacts"),
+            data_path=Path("artifacts/wine.csv"),
             test_size=0.25,
             random_state=42,
             stratify_column="quality",
@@ -156,8 +156,8 @@ class TestPreprocessing(unittest.TestCase):
 
     def test_build_preprocessing_pipeline_skips_outlier_capper_when_disabled(self):
         config = DataTransformationConfig(
-            root_dir=Path("/tmp"),
-            data_path=Path("/tmp/wine.csv"),
+            root_dir=Path("artifacts"),
+            data_path=Path("artifacts/wine.csv"),
             test_size=0.25,
             random_state=42,
             stratify_column="quality",
@@ -174,8 +174,8 @@ class TestPreprocessing(unittest.TestCase):
 
     def test_build_preprocessing_pipeline_skips_imputer_when_disabled(self):
         config = DataTransformationConfig(
-            root_dir=Path("/tmp"),
-            data_path=Path("/tmp/wine.csv"),
+            root_dir=Path("artifacts"),
+            data_path=Path("artifacts/wine.csv"),
             test_size=0.25,
             random_state=42,
             stratify_column="quality",
@@ -192,8 +192,8 @@ class TestPreprocessing(unittest.TestCase):
 
     def test_build_preprocessing_pipeline_uses_outlier_iqr_multiplier_from_config(self):
         config = DataTransformationConfig(
-            root_dir=Path("/tmp"),
-            data_path=Path("/tmp/wine.csv"),
+            root_dir=Path("artifacts"),
+            data_path=Path("artifacts/wine.csv"),
             test_size=0.25,
             random_state=42,
             stratify_column="quality",
