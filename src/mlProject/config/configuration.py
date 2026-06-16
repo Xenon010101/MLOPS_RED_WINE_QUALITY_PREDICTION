@@ -117,7 +117,6 @@ class ConfigurationManager:
             impute_missing=preproc.get("impute_missing", True),
             feature_engineering_flags=preproc.get("feature_engineering_flags", None),
             preprocessor_path=Path(preprocessor_path),
-            use_scaler=self.params.Preprocessing.use_scaler,
             min_samples_per_class=min_samples_per_class,
             enable_per_class_evaluation=enable_per_class_evaluation,
         )
