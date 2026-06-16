@@ -76,7 +76,8 @@ limiter = Limiter(
 _training_lock = threading.Lock()
 _log_lock = threading.Lock()
 is_training = False
-training_log = deque(maxlen=100)
+MAX_LOG_LINES = 100
+training_log = deque(maxlen=MAX_LOG_LINES)
 _train_executor = ThreadPoolExecutor(max_workers=1)
 _training_process = None
 _training_process_lock = threading.Lock()
