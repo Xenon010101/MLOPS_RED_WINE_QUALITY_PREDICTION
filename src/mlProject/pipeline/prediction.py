@@ -39,14 +39,19 @@ class PredictionPipeline:
             self._loaded_mtime = current_mtime
             logger.info(f"Loaded unified pipeline from {model_path}")
 
-        # Convert input to appropriate format
         if isinstance(data, np.ndarray):
             input_data = data
         elif isinstance(data, pd.DataFrame):
-            try:
-                input_data = data[NUMERIC_FEATURES].values
-            except (KeyError, ValueError):
-                input_data = data.values
+            missing = [col for col in NUMERIC_FEATURES if col not in data.columns]
+            if missing:
+                raise ValueError(
+                    f"Missing required feature columns: {missing}. "
+                    f"Expected columns: {NUMERIC_FEATURES}"
+                )
+            extra = [col for col in data.columns if col not in NUMERIC_FEATURES]
+            if extra:
+                logger.warning(f"Extra columns ignored during prediction: {extra}")
+            input_data = data[NUMERIC_FEATURES].values
         else:
             input_data = data
 
