@@ -94,6 +94,7 @@ def register_model(
     data_hash: Optional[str] = None,
     max_versions_to_keep: int = 10,
     quality_gate_max_rmse_degradation_pct: float = 5.0,
+    stable_model_path: Optional[Path] = None,
 ) -> dict:
     """Register a model version and enforce quality gates."""
     lock = _lock_registry(registry_path)
@@ -176,6 +177,29 @@ def register_model(
             registry["production"] = version_id
             logger.info(f"First model {version_id} registered as production")
 
+        # Two-phase promotion: copy model to stable path under lock before marking as production
+        if status == "production" and stable_model_path is not None:
+            stable_model_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(model_path), str(stable_model_path))
+            from mlProject.utils.common import compute_checksum, save_checksum
+            src_checksum = compute_checksum(model_path)
+            dst_checksum = compute_checksum(stable_model_path)
+            if src_checksum != dst_checksum:
+                status = "rejected"
+                if registry.get("production") == version_id:
+                    del registry["production"]
+                logger.error(
+                    f"Model {version_id} REJECTED: checksum mismatch after copy "
+                    f"to stable path {stable_model_path} (src={src_checksum[:8]}, dst={dst_checksum[:8]})"
+                )
+            else:
+                stable_checksum_path = Path(str(stable_model_path) + ".sha256")
+                save_checksum(stable_model_path, stable_checksum_path)
+                logger.info(
+                    f"Model {version_id} copied to stable path {stable_model_path} "
+                    f"and checksum verified ({src_checksum[:8]})"
+                )
+
         entry = {
             "id": version_id,
             "path": str(model_path),
@@ -216,6 +240,7 @@ def update_registration(
     params: dict = None,
     data_hash: str = None,
     quality_gate_max_rmse_degradation_pct: float = None,
+    stable_model_path: Path = None,
 ) -> bool:
     """Update an existing registry entry's metrics, status, model path, params, and/or data hash."""
     lock = _lock_registry(registry_path)
@@ -223,6 +248,7 @@ def update_registration(
         registry = load_registry(registry_path)
         for v in registry.get("versions", []):
             if v.get("id") == version_id:
+                was_production = v.get("status") == "production" or registry.get("production") == version_id
                 if metrics is not None:
                     v["metrics"] = metrics
                 if status is not None:
@@ -236,6 +262,35 @@ def update_registration(
                 if quality_gate_max_rmse_degradation_pct is not None:
                     v["quality_gate_max_rmse_degradation_pct"] = quality_gate_max_rmse_degradation_pct
                 v["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+                # If this version is production, ensure stable model file is in sync
+                is_production = v.get("status") == "production" or registry.get("production") == version_id
+                if is_production and stable_model_path is not None:
+                    source_path = Path(model_path) if model_path is not None else Path(v["path"])
+                    if source_path.exists():
+                        stable_model_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(source_path), str(stable_model_path))
+                        from mlProject.utils.common import compute_checksum, save_checksum
+                        src_checksum = compute_checksum(source_path)
+                        dst_checksum = compute_checksum(stable_model_path)
+                        if src_checksum != dst_checksum:
+                            logger.error(
+                                f"Model {version_id} stable copy checksum mismatch during update: "
+                                f"src={src_checksum[:8]}, dst={dst_checksum[:8]}"
+                            )
+                        else:
+                            stable_checksum_path = Path(str(stable_model_path) + ".sha256")
+                            save_checksum(stable_model_path, stable_checksum_path)
+                            logger.info(
+                                f"Model {version_id} stable copy synced during update "
+                                f"({src_checksum[:8]})"
+                            )
+                    else:
+                        logger.warning(
+                            f"Source model file {source_path} not found for production "
+                            f"version {version_id} — stable copy skipped"
+                        )
+
                 save_registry(registry_path, registry)
                 logger.info(
                     f"Updated registration for version {version_id}: "

@@ -30,6 +30,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
+import portalocker
 from flask import Flask, abort, jsonify, render_template, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -76,6 +77,7 @@ limiter = Limiter(
 # - _log_lock protects all reads/writes to training_log
 # - ThreadPoolExecutor(max_workers=1) replaces raw thread creation
 # - Timeout mechanism auto-releases lock if training exceeds TRAIN_TIMEOUT
+# - _training_file_lock_path provides cross-process exclusion for DVC/CLI path
 # ---------------------------------------------------------------------------
 _training_lock = threading.Lock()
 _log_lock = threading.Lock()
@@ -86,6 +88,39 @@ _train_executor = ThreadPoolExecutor(max_workers=1)
 _training_process = None
 _training_process_lock = threading.Lock()
 TRAIN_TIMEOUT = int(os.environ.get("TRAIN_TIMEOUT", "1800"))  # default 30 min
+
+_TRAINING_LOCK_FILE = Path("artifacts/.train.lock")
+_training_file_lock_fd = None
+_training_file_lock_lock = threading.Lock()
+
+
+def _acquire_training_file_lock() -> bool:
+    """Acquire a cross-process file lock for training. Returns True if acquired."""
+    global _training_file_lock_fd
+    with _training_file_lock_lock:
+        if _training_file_lock_fd is not None:
+            return False
+        _TRAINING_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = open(_TRAINING_LOCK_FILE, "w")
+            portalocker.lock(fd, portalocker.LOCK_EX | portalocker.LOCK_NB)
+            _training_file_lock_fd = fd
+            return True
+        except (IOError, portalocker.LockException):
+            return False
+
+
+def _release_training_file_lock():
+    """Release the cross-process training file lock."""
+    global _training_file_lock_fd
+    with _training_file_lock_lock:
+        if _training_file_lock_fd is not None:
+            try:
+                portalocker.unlock(_training_file_lock_fd)
+                _training_file_lock_fd.close()
+            except Exception:
+                pass
+            _training_file_lock_fd = None
 
 
 
@@ -182,6 +217,14 @@ def validate_config_at_startup() -> None:
 def _run_training_in_background() -> None:
     """Subprocess-based training; releases _training_lock when done."""
     global is_training, _training_process
+    if not _acquire_training_file_lock():
+        with _log_lock:
+            training_log.append("Training rejected: another process is already training")
+        try:
+            _training_lock.release()
+        except RuntimeError:
+            pass
+        return
     start_time = time.time()
     try:
         with _log_lock:
@@ -217,6 +260,7 @@ def _run_training_in_background() -> None:
             training_log.append(f"Training error: {exc}")
     finally:
         is_training = False
+        _release_training_file_lock()
         with _training_process_lock:
             _training_process = None
         try:
@@ -235,6 +279,9 @@ def ensure_model_trained() -> None:
         model_path = Path("artifacts/model_trainer/model.joblib")
 
     if not model_path.exists():
+        if not _acquire_training_file_lock():
+            print("Auto-training skipped: another process is already training")
+            return
         print("Model not found - starting automatic training...")
         try:
             result = subprocess.run(
@@ -249,6 +296,8 @@ def ensure_model_trained() -> None:
                 print(f"Auto-training failed:\n{result.stderr}")
         except Exception as exc:
             print(f"Auto-training failed: {exc}")
+        finally:
+            _release_training_file_lock()
     else:
         from mlProject.utils.common import verify_model_integrity
         from mlProject.utils.model_registry import load_registry

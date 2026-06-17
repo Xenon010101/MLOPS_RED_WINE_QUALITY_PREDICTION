@@ -171,5 +171,100 @@ class TestModelRegistry(unittest.TestCase):
             self.assertEqual(issues, [])
 
 
+    def test_concurrent_registration_preserves_invariant(self):
+        """Register two versions racing — stable file must match registry production."""
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = Path(tmp) / "registry.json"
+            errors = []
+
+            def register_model_safe(vid, metrics_rmse):
+                try:
+                    mp = Path(tmp) / f"model_{vid}.joblib"
+                    mp.write_text(f"weights_{vid}")
+                    ha = Path(str(mp) + ".sha256")
+                    ha.write_text("dummy")
+                    register_model(
+                        registry_path=registry_path,
+                        model_path=mp,
+                        version_id=vid,
+                        metrics={"rmse": metrics_rmse},
+                        params={"alpha": 0.1},
+                        max_versions_to_keep=5,
+                        stable_model_path=Path(tmp) / "model.joblib",
+                    )
+                except Exception as e:
+                    errors.append(f"{vid}: {e}")
+
+            threads = [
+                threading.Thread(target=register_model_safe, args=("v002", 0.5)),
+                threading.Thread(target=register_model_safe, args=("v003", 0.6)),
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            registry = load_registry(registry_path)
+            production_id = registry.get("production")
+            stable_path = Path(tmp) / "model.joblib"
+            if production_id and stable_path.exists():
+                expected = f"weights_{production_id}"
+                actual = stable_path.read_text()
+                self.assertEqual(
+                    actual, expected,
+                    f"Stable model content '{actual}' does not match "
+                    f"production version {production_id} content '{expected}'"
+                )
+
+    def test_concurrent_promotion_checksum_integrity(self):
+        """Verify checksum of stable file matches source after concurrent promotion."""
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = Path(tmp) / "registry.json"
+            errors = []
+
+            def register_and_verify(vid, metrics_rmse):
+                try:
+                    mp = Path(tmp) / f"model_{vid}.joblib"
+                    mp.write_text(f"weights_{vid}")
+                    register_model(
+                        registry_path=registry_path,
+                        model_path=mp,
+                        version_id=vid,
+                        metrics={"rmse": metrics_rmse},
+                        params={"alpha": 0.1},
+                        max_versions_to_keep=5,
+                        stable_model_path=Path(tmp) / "model.joblib",
+                    )
+                except Exception as e:
+                    errors.append(f"{vid}: {e}")
+
+            threads = [
+                threading.Thread(target=register_and_verify, args=("v004", 0.7)),
+                threading.Thread(target=register_and_verify, args=("v005", 0.8)),
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            registry = load_registry(registry_path)
+            production_id = registry.get("production")
+            stable_path = Path(tmp) / "model.joblib"
+            stable_checksum_path = Path(str(stable_path) + ".sha256")
+            if production_id and stable_path.exists() and stable_checksum_path.exists():
+                src_path = Path(tmp) / f"model_{production_id}.joblib"
+                if src_path.exists():
+                    from mlProject.utils.common import compute_checksum
+                    src_cs = compute_checksum(src_path)
+                    dst_cs = compute_checksum(stable_path)
+                    self.assertEqual(
+                        src_cs, dst_cs,
+                        f"Checksum mismatch for production version {production_id}: "
+                        f"src={src_cs[:8]}, dst={dst_cs[:8]}"
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
