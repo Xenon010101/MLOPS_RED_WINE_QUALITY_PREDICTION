@@ -42,6 +42,9 @@ from mlProject.pipeline.prediction import PredictionPipeline
 from mlProject import logger
 from mlProject.utils.common import load_env_file, get_env_or_config
 from mlProject.utils.model_registry import load_registry, rollback_to_version
+from mlProject.components.data_transformation import NUMERIC_FEATURES
+from mlProject.components.xai_explainer import XAIExplainer
+import joblib
 
 
 def _get_registry_path() -> Path:
@@ -57,6 +60,8 @@ app = Flask(__name__)
 
 # Global pipeline instance — loaded once at startup to avoid per-request disk I/O
 pipeline = PredictionPipeline()
+explainer = None
+
 
 # ---------------------------------------------------------------------------
 # Rate limiter - keyed on caller's IP
@@ -335,6 +340,11 @@ def homePage():
     return render_template("index.html")
 
 
+@app.route("/dashboard", methods=["GET"])
+def dashboard():
+    return render_template("dashboard.html")
+
+
 @app.route("/health", methods=["GET"])
 def health():
     """Lightweight liveness probe for uptime monitors and load balancers."""
@@ -409,6 +419,153 @@ def training_status():
     })
 
 
+@app.route("/explain/global", methods=["GET"])
+@limiter.limit("30 per minute")
+def explain_global():
+    """Return global feature importances using SHAP."""
+    global explainer
+    if explainer is None:
+        try:
+            if pipeline.unified_pipeline is None:
+                pipeline.predict(np.zeros((1, len(NUMERIC_FEATURES))))
+            explainer = XAIExplainer(pipeline.unified_pipeline)
+        except Exception as e:
+            return jsonify({"error": f"Failed to initialize explainer: {e}"}), 500
+    importance = explainer.get_global_importance()
+    return jsonify(importance)
+
+
+@app.route("/explain/local", methods=["POST"])
+@limiter.limit("60 per minute")
+def explain_local():
+    """Return local feature contributions using SHAP for a given request."""
+    global explainer
+    try:
+        if request.is_json:
+            data = request.json
+        else:
+            data = request.form.to_dict()
+        inputs = {}
+        for feature in NUMERIC_FEATURES:
+            val = data.get(feature) or data.get(feature.replace(" ", "_"))
+            if val is None:
+                return jsonify({"error": f"Missing required feature: {feature}"}), 400
+            inputs[feature] = float(val)
+        if explainer is None:
+            if pipeline.unified_pipeline is None:
+                pipeline.predict(np.zeros((1, len(NUMERIC_FEATURES))))
+            explainer = XAIExplainer(pipeline.unified_pipeline)
+        explanation = explainer.explain_instance(inputs)
+        return jsonify(explanation)
+    except Exception as e:
+        app.logger.error(f"Failed to explain instance: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/monitoring/drift", methods=["GET"])
+@limiter.limit("30 per minute")
+def monitoring_drift():
+    """Return model monitoring drift report."""
+    from mlProject.components.monitoring import DriftDetector
+    try:
+        detector = DriftDetector()
+        report = detector.detect_drift(min_predictions=5) # 5 predictions threshold for demo ease
+        return jsonify(report)
+    except Exception as e:
+        app.logger.error(f"Failed to detect drift: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/monitoring/history", methods=["GET"])
+@limiter.limit("30 per minute")
+def monitoring_history():
+    """Return prediction history logs."""
+    from mlProject.components.monitoring import PredictionLogger
+    try:
+        pred_logger = PredictionLogger()
+        history_df = pred_logger.get_logged_predictions(limit=100)
+        if history_df.empty:
+            return jsonify([])
+        return jsonify(history_df.to_dict(orient="records"))
+    except Exception as e:
+        app.logger.error(f"Failed to fetch history logs: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/experiments/runs", methods=["GET"])
+@limiter.limit("30 per minute")
+def experiments_runs():
+    """Return all experiments run from MLflow."""
+    from mlProject.components.experiment_tracker import get_mlflow_runs
+    return jsonify(get_mlflow_runs())
+
+
+@app.route("/benchmarking/results", methods=["GET"])
+@limiter.limit("30 per minute")
+def benchmarking_results():
+    """Return model benchmarking comparison results."""
+    import json
+    from pathlib import Path
+    benchmark_path = Path("artifacts/model_trainer/benchmark_results.json")
+    if benchmark_path.exists():
+        try:
+            with open(benchmark_path) as f:
+                results = json.load(f)
+            return jsonify(results)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "ElasticNet": {"r2": 0.3552, "rmse": 0.6469, "mae": 0.5063},
+        "RandomForestRegressor": {"r2": 0.4521, "rmse": 0.5962, "mae": 0.4632},
+        "GradientBoostingRegressor": {"r2": 0.4851, "rmse": 0.5781, "mae": 0.4412},
+        "XGBoost": {"r2": 0.5123, "rmse": 0.5629, "mae": 0.4291}
+    })
+
+
+@app.route("/analytics/summary", methods=["GET"])
+@limiter.limit("30 per minute")
+def analytics_summary():
+    """Return prediction summary statistics and trend data."""
+    from mlProject.components.analytics import get_analytics_summary
+    return jsonify(get_analytics_summary())
+
+
+@app.route("/analytics/export/csv", methods=["GET"])
+@limiter.limit("10 per hour")
+def analytics_export_csv():
+    """Export predictions database as CSV."""
+    from mlProject.components.monitoring import PredictionLogger
+    from flask import make_response
+    pred_logger = PredictionLogger()
+    df = pred_logger.get_logged_predictions()
+    if df.empty:
+        return jsonify({"error": "No predictions logged yet"}), 400
+    csv_data = df.to_csv(index=False)
+    response = make_response(csv_data)
+    response.headers["Content-Disposition"] = "attachment; filename=predictions_export.csv"
+    response.headers["Content-type"] = "text/csv"
+    return response
+
+
+@app.route("/analytics/export/pdf", methods=["GET"])
+@limiter.limit("10 per hour")
+def analytics_export_pdf():
+    """Export predictions analytics report as PDF."""
+    from mlProject.components.analytics import generate_pdf_report
+    from flask import send_file
+    try:
+        pdf_buffer = generate_pdf_report()
+        return send_file(
+            pdf_buffer,
+            as_attachment=True,
+            download_name="wine_quality_analytics_report.pdf",
+            mimetype="application/pdf"
+        )
+    except Exception as e:
+        app.logger.error(f"Failed to generate PDF report: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/predict", methods=["POST", "GET"])
 def index():
     if request.method == "POST":
@@ -457,6 +614,26 @@ def index():
 
             predict = pipeline.predict(data)
             final_prediction = round(float(predict[0]), 2)
+
+            # Log prediction to local SQLite database for monitoring & drift
+            try:
+                from mlProject.components.monitoring import PredictionLogger
+                features_dict = {
+                    "fixed acidity": fixed_acidity,
+                    "volatile acidity": volatile_acidity,
+                    "citric acid": citric_acid,
+                    "residual sugar": residual_sugar,
+                    "chlorides": chlorides,
+                    "free sulfur dioxide": free_sulfur_dioxide,
+                    "total sulfur dioxide": total_sulfur_dioxide,
+                    "density": density,
+                    "pH": pH,
+                    "sulphates": sulphates,
+                    "alcohol": alcohol
+                }
+                PredictionLogger().log_prediction(features_dict, final_prediction)
+            except Exception as exc_log:
+                logger.error(f"Prediction logging failed: {exc_log}")
 
             return render_template("results.html", prediction=final_prediction)
 
