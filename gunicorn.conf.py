@@ -20,6 +20,17 @@ def when_ready(server):
     lock_path = "/tmp/model_init.lock"
     status_path = "/tmp/model_init_done"
 
+    # Remove stale lock file if no gunicorn master process is running
+    if os.path.exists(lock_path):
+        stale_pid = None
+        try:
+            with open(lock_path) as f:
+                stale_pid = int(f.read().strip())
+            os.kill(stale_pid, 0)  # Process still alive, lock is valid
+        except (OSError, ValueError):
+            server.log.info(f"Removing stale lock file (PID={stale_pid})")
+            os.remove(lock_path)
+
     if os.path.exists(status_path):
         server.log.info("Model already initialised — skipping training")
         return
