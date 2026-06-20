@@ -96,6 +96,36 @@ class TestModelRegistry(unittest.TestCase):
             registry = load_registry(registry_path)
             self.assertEqual(registry["production"], "v001")
 
+    def test_rollback_refreshes_model_info(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = Path(tmp) / "registry.json"
+            v1 = Path(tmp) / "model_v001.joblib"
+            v2 = Path(tmp) / "model_v002.joblib"
+            v1.write_text("weights_v1")
+            v2.write_text("weights_v2")
+
+            register_model(
+                registry_path=registry_path,
+                model_path=v1,
+                version_id="v001",
+                metrics={"rmse": 0.5},
+                params={"alpha": 0.1},
+            )
+            register_model(
+                registry_path=registry_path,
+                model_path=v2,
+                version_id="v002",
+                metrics={"rmse": 0.4},
+                params={"alpha": 0.2},
+            )
+
+            self.assertTrue(rollback_to_version(registry_path, "v001"))
+
+            model_info = json.loads((Path(tmp) / "model_info.json").read_text())
+            self.assertEqual(model_info["version_id"], "v001")
+            self.assertEqual(model_info["model_path"], str(v1))
+            self.assertEqual(model_info["params"], {"alpha": 0.1})
+
     def test_rollback_fails_when_versioned_file_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             registry_path = Path(tmp) / "registry.json"

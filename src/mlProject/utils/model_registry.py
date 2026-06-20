@@ -343,6 +343,15 @@ def rollback_to_version(registry_path: Path, version_id: str) -> bool:
                 shutil.copy2(str(versioned_path), str(stable_path))
                 checksum_path = Path(str(stable_path) + ".sha256")
                 save_checksum(stable_path, checksum_path)
+                model_info_path = stable_path.parent / "model_info.json"
+                model_info = {
+                    "version_id": version_id,
+                    "model_path": str(versioned_path),
+                    "params": v.get("params", {}),
+                    "data_hash": v.get("data_hash", ""),
+                }
+                with open(model_info_path, "w") as f:
+                    json.dump(model_info, f, indent=2)
                 registry["production"] = version_id
                 save_registry(registry_path, registry)
                 logger.info(
