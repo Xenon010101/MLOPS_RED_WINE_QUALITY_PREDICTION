@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 import io
 import numpy as np
 import pandas as pd
-from flask import Flask, abort, jsonify, render_template, request, Response
+from flask import Flask, abort, jsonify, render_template, request, Response, g
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from pathlib import Path
