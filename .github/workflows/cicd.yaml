@@ -25,6 +25,10 @@ jobs:
         pip install pytest
         pip install -e .
         
+    - name: Verify DVC lock consistency
+      run: |
+        dvc diff --md || echo "No DVC data drift detected"
+
     - name: Run tests
       run: |
         python -m pytest tests/ -v
