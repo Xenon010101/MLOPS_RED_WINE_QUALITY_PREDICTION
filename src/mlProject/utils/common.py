@@ -1,6 +1,7 @@
 import os
 import hashlib
 import zipfile
+from functools import lru_cache
 from box.exceptions import BoxValueError
 import yaml
 from mlProject import logger
@@ -42,9 +43,15 @@ def get_env_or_config(env_var: str, config_value, transform=None):
 
 
 
+@lru_cache(maxsize=None)
 @ensure_annotations
 def read_yaml(path_to_yaml: Path) -> ConfigBox:
     """reads yaml file and returns
+
+    Config files are immutable for the process lifetime, so the parsed
+    result is cached per path to avoid re-reading and re-parsing on every
+    ConfigurationManager instantiation (e.g. the /health hot path).
+    Call read_yaml.cache_clear() to invalidate (used by tests).
 
     Args:
         path_to_yaml (str): path like input

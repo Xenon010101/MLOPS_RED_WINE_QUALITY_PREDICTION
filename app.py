@@ -51,8 +51,13 @@ from mlProject.components.retraining import RetrainingEngine
 from mlProject.components.observability import APILogger, ObservabilityCollector
 
 
+@functools.lru_cache(maxsize=1)
 def _get_registry_path() -> Path:
-    """Get the configured model registry path."""
+    """Get the configured model registry path.
+
+    Cached for the process lifetime — the path is derived from immutable
+    config and is resolved on every /health request.
+    """
     try:
         return ConfigurationManager().get_model_registry_config().registry_path
     except Exception:
