@@ -88,7 +88,7 @@ def _ensure_model_trained(server):
     try:
         import subprocess
         result = subprocess.run(
-            ["python", "main.py"],
+            [sys.executable, "main.py"],
             capture_output=True,
             text=True,
             timeout=300,
