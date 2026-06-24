@@ -305,14 +305,15 @@ def validate_config_at_startup() -> None:
 def _run_training_in_background() -> None:
     """Subprocess-based training; releases _training_lock when done."""
     global is_training, _training_process
-    if not _acquire_training_file_lock():
-        with _log_lock:
-            training_log.append("Training rejected: another process is already training")
-        try:
-            _training_lock.release()
-        except RuntimeError:
-            pass
-        return
+        if not _acquire_training_file_lock():
+            is_training = False
+            with _log_lock:
+                training_log.append("Training rejected: another process is already training")
+            try:
+                _training_lock.release()
+            except RuntimeError:
+                pass
+            return
     start_time = time.time()
     _write_training_state(True, ["Training started..."], started_at=start_time)
     try:
@@ -658,6 +659,8 @@ def analytics_export_pdf():
 @limiter.limit("30 per minute")
 def index():
     if request.method == "POST":
+        if request.content_type and "form" not in request.content_type and "urlencoded" not in request.content_type:
+            return render_template("results.html", error_msg="Only form-encoded data is supported. Use Content-Type: application/x-www-form-urlencoded."), 400
         try:
             fixed_acidity        = float(request.form["fixed_acidity"])
             volatile_acidity     = float(request.form["volatile_acidity"])
