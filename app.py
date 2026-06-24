@@ -375,11 +375,12 @@ def ensure_model_trained() -> None:
             return
         print("Model not found - starting automatic training...")
         try:
+            train_timeout = int(os.environ.get("TRAIN_TIMEOUT", "1800"))
             result = subprocess.run(
                 [sys.executable, "main.py"],
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=train_timeout,
             )
             if result.returncode == 0:
                 print("Auto-training completed!")
