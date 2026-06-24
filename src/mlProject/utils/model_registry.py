@@ -97,6 +97,10 @@ def register_model(
     stable_model_path: Optional[Path] = None,
 ) -> dict:
     """Register a model version and enforce quality gates."""
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"Cannot register model {version_id}: model file not found at {model_path}"
+        )
     lock = _lock_registry(registry_path)
     try:
         registry = load_registry(registry_path)
