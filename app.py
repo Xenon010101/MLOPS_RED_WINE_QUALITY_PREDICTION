@@ -43,6 +43,8 @@ from mlProject.utils.common import load_env_file, get_env_or_config
 from mlProject.utils.model_registry import load_registry, rollback_to_version
 from mlProject.components.data_transformation import NUMERIC_FEATURES
 from mlProject.components.xai_explainer import XAIExplainer
+from mlProject.batch_prediction import batch_bp
+from mlProject.batch_prediction import batch_bp
 import joblib
 
 # Enterprise MLOps components
@@ -421,6 +423,10 @@ def ensure_model_trained() -> None:
 # Routes
 # ---------------------------------------------------------------------------
 
+
+
+app.register_blueprint(batch_bp)
+app.register_blueprint(batch_bp)
 @app.route("/", methods=["GET"])
 def homePage():
     return render_template("index.html")
