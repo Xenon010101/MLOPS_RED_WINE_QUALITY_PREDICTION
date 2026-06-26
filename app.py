@@ -117,7 +117,7 @@ limiter = Limiter(
 # - _training_file_lock_path provides cross-process exclusion for DVC/CLI path
 # ---------------------------------------------------------------------------
 _training_lock = threading.Lock()
-_log_lock = threading.Lock()
+_log_lock = threading.RLock()
 is_training = False
 MAX_LOG_LINES = 100
 training_log = deque(maxlen=MAX_LOG_LINES)
